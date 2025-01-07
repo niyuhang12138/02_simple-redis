@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod tests {
+mod resp;
 
-    #[test]
-    fn test_fn() {}
-}
+pub use resp::*;
