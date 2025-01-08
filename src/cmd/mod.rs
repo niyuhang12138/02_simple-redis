@@ -1,18 +1,13 @@
 mod hmap;
 mod map;
 
-use crate::{backend::Backend, RespArray, RespError, RespFrame};
+use crate::{Backend, RespArray, RespError, RespFrame, SimpleString};
 use enum_dispatch::enum_dispatch;
 use lazy_static::lazy_static;
 use thiserror::Error;
 
 lazy_static! {
-    static ref RESP_OK: RespFrame = RespFrame::SimpleString("OK".into());
-}
-
-#[enum_dispatch]
-pub trait CommandExecutor {
-    fn execute(self, backend: &Backend) -> RespFrame;
+    static ref RESP_OK: RespFrame = SimpleString::new("OK").into();
 }
 
 #[derive(Error, Debug)]
@@ -21,19 +16,29 @@ pub enum CommandError {
     InvalidCommand(String),
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
+
     #[error("{0}")]
     RespError(#[from] RespError),
     #[error("Utf8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
 }
 
+#[enum_dispatch]
+pub trait CommandExecutor {
+    fn execute(self, backend: &Backend) -> RespFrame;
+}
+
 #[enum_dispatch(CommandExecutor)]
+#[derive(Debug)]
 pub enum Command {
     Get(Get),
     Set(Set),
     HGet(HGet),
     HSet(HSet),
     HGetAll(HGetAll),
+
+    // unrecognized command
+    Unrecognized(Unrecognized),
 }
 
 #[derive(Debug)]
@@ -65,21 +70,32 @@ pub struct HGetAll {
     key: String,
 }
 
+#[derive(Debug)]
+pub struct Unrecognized;
+
+impl TryFrom<RespFrame> for Command {
+    type Error = CommandError;
+    fn try_from(v: RespFrame) -> Result<Self, Self::Error> {
+        match v {
+            RespFrame::Array(array) => array.try_into(),
+            _ => Err(CommandError::InvalidCommand(
+                "Command must be an Array".to_string(),
+            )),
+        }
+    }
+}
+
 impl TryFrom<RespArray> for Command {
     type Error = CommandError;
-
-    fn try_from(value: RespArray) -> Result<Self, Self::Error> {
-        match value.first() {
+    fn try_from(v: RespArray) -> Result<Self, Self::Error> {
+        match v.first() {
             Some(RespFrame::BulkString(ref cmd)) => match cmd.as_ref() {
-                b"get" => Ok(Get::try_from(value)?.into()),
-                b"set" => Ok(Set::try_from(value)?.into()),
-                b"hget" => Ok(HGet::try_from(value)?.into()),
-                b"hset" => Ok(HSet::try_from(value)?.into()),
-                b"hgetall" => Ok(HGetAll::try_from(value)?.into()),
-                _ => Err(CommandError::InvalidCommand(format!(
-                    "Invalid command: {}",
-                    String::from_utf8_lossy(cmd.as_ref())
-                ))),
+                b"get" => Ok(Get::try_from(v)?.into()),
+                b"set" => Ok(Set::try_from(v)?.into()),
+                b"hget" => Ok(HGet::try_from(v)?.into()),
+                b"hset" => Ok(HSet::try_from(v)?.into()),
+                b"hgetall" => Ok(HGetAll::try_from(v)?.into()),
+                _ => Ok(Unrecognized.into()),
             },
             _ => Err(CommandError::InvalidCommand(
                 "Command must have a BulkString as the first argument".to_string(),
@@ -88,12 +104,17 @@ impl TryFrom<RespArray> for Command {
     }
 }
 
+impl CommandExecutor for Unrecognized {
+    fn execute(self, _: &Backend) -> RespFrame {
+        RESP_OK.clone()
+    }
+}
+
 fn validate_command(
     value: &RespArray,
     names: &[&'static str],
     n_args: usize,
 ) -> Result<(), CommandError> {
-    // test if th array has 2 elements
     if value.len() != n_args + names.len() {
         return Err(CommandError::InvalidArgument(format!(
             "{} command must have exactly {} argument",
@@ -107,7 +128,7 @@ fn validate_command(
             RespFrame::BulkString(ref cmd) => {
                 if cmd.as_ref().to_ascii_lowercase() != name.as_bytes() {
                     return Err(CommandError::InvalidCommand(format!(
-                        "Invalid command expected {}, got {}",
+                        "Invalid command: expected {}, got {}",
                         name,
                         String::from_utf8_lossy(cmd.as_ref())
                     )));
@@ -120,7 +141,6 @@ fn validate_command(
             }
         }
     }
-
     Ok(())
 }
 
@@ -130,9 +150,8 @@ fn extract_args(value: RespArray, start: usize) -> Result<Vec<RespFrame>, Comman
 
 #[cfg(test)]
 mod tests {
-    use crate::{RespDecode, RespNull};
-
     use super::*;
+    use crate::{RespDecode, RespNull};
     use anyhow::Result;
     use bytes::BytesMut;
 

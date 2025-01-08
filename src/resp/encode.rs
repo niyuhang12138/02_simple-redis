@@ -1,43 +1,25 @@
-/*!
- * 如何解析 Frame
- * - simple string: "+OK\r\n"
- * - error: "-Error message\r\n"
- * - bulk error: "!<length>\r\n<error>\r\n"
- * - integer: ":[<+|->]<value>\r\n"
- * - bulk string: "$<length>\r\n<data>\r\n"
- * - null bulk string: "$-1\r\n"
- * - array: "*<number-of-elements>\r\n<element-1>...<element-n>"
- *     - "*2\r\n$3\r\nget\r\n$5\r\nhello\r\n"
- * - null array: "*-1\r\n"
- * - null: "_\r\n"
- * - boolean: "#<t|f>\r\n"
- * - double: ",[<+|->]<integral>[.<fractional>][<E|e>[sign]<exponent>]\r\n"
- * - map: "%<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>"
- * - set: "~<number-of-elements>\r\n<element-1>...<element-n>"
- */
-
-use super::{
+use crate::{
     BulkString, RespArray, RespEncode, RespMap, RespNull, RespNullArray, RespNullBulkString,
     RespSet, SimpleError, SimpleString,
 };
 
 const BUF_CAP: usize = 4096;
 
-/// - simple string: "+OK\r\n"
+// - simple string: "+OK\r\n"
 impl RespEncode for SimpleString {
     fn encode(self) -> Vec<u8> {
         format!("+{}\r\n", self.0).into_bytes()
     }
 }
 
-/// - error: "-Error message\r\n"
+// - error: "-Error message\r\n"
 impl RespEncode for SimpleError {
     fn encode(self) -> Vec<u8> {
         format!("-{}\r\n", self.0).into_bytes()
     }
 }
 
-/// - integer ":[<+|->]<value>\r\n"
+// - integer: ":[<+|->]<value>\r\n"
 impl RespEncode for i64 {
     fn encode(self) -> Vec<u8> {
         let sign = if self < 0 { "" } else { "+" };
@@ -45,7 +27,7 @@ impl RespEncode for i64 {
     }
 }
 
-/// - bulk string: "$<length>\r\n<data>\r\n"
+// - bulk string: "$<length>\r\n<data>\r\n"
 impl RespEncode for BulkString {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(self.len() + 16);
@@ -56,19 +38,18 @@ impl RespEncode for BulkString {
     }
 }
 
-/// - null bulk string: "$-1\r\n"
+// - null bulk string: "$-1\r\n"
 impl RespEncode for RespNullBulkString {
     fn encode(self) -> Vec<u8> {
         b"$-1\r\n".to_vec()
     }
 }
 
-/// - array: "*<number-of-elements>\r\n<element-1>...<element-n>"
-///     - "*2\r\n$3\r\nget\r\n$5\r\nhello\r\n"
+// - array: "*<number-of-elements>\r\n<element-1>...<element-n>"
 impl RespEncode for RespArray {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(BUF_CAP);
-        buf.extend_from_slice(&format!("*{}\r\n", self.len()).into_bytes());
+        buf.extend_from_slice(&format!("*{}\r\n", self.0.len()).into_bytes());
         for frame in self.0 {
             buf.extend_from_slice(&frame.encode());
         }
@@ -76,28 +57,28 @@ impl RespEncode for RespArray {
     }
 }
 
-/// - null array: "*-1\r\n"
+// - null array: "*-1\r\n"
 impl RespEncode for RespNullArray {
     fn encode(self) -> Vec<u8> {
         b"*-1\r\n".to_vec()
     }
 }
 
-/// - null: "_\r\n"
+// - null: "_\r\n"
 impl RespEncode for RespNull {
     fn encode(self) -> Vec<u8> {
         b"_\r\n".to_vec()
     }
 }
 
-/// - boolean: "#<t|f>\r\n"
+// - boolean: "#<t|f>\r\n"
 impl RespEncode for bool {
     fn encode(self) -> Vec<u8> {
         format!("#{}\r\n", if self { "t" } else { "f" }).into_bytes()
     }
 }
 
-/// - double: ",[<+|->]<integral>[.<fractional>][<E|e>[sign]<exponent>]\r\n"
+// - double: ",[<+|->]<integral>[.<fractional>][<E|e>[sign]<exponent>]\r\n"
 impl RespEncode for f64 {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(32);
@@ -113,7 +94,8 @@ impl RespEncode for f64 {
     }
 }
 
-/// - map: "%<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>"
+// - map: "%<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>"
+// we only support string key which encode to SimpleString
 impl RespEncode for RespMap {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(BUF_CAP);
@@ -126,7 +108,7 @@ impl RespEncode for RespMap {
     }
 }
 
-/// - set: "~<number-of-elements>\r\n<element-1>...<element-n>"
+// - set: "~<number-of-elements>\r\n<element-1>...<element-n>"
 impl RespEncode for RespSet {
     fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(BUF_CAP);
@@ -140,19 +122,22 @@ impl RespEncode for RespSet {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::RespFrame;
+
+    use super::*;
 
     #[test]
     fn test_simple_string_encode() {
         let frame: RespFrame = SimpleString::new("OK".to_string()).into();
-        assert_eq!(frame.encode(), b"+OK\r\n")
+
+        assert_eq!(frame.encode(), b"+OK\r\n");
     }
 
     #[test]
-    fn test_simple_error_encode() {
+    fn test_error_encode() {
         let frame: RespFrame = SimpleError::new("Error message".to_string()).into();
-        assert_eq!(frame.encode(), b"-Error message\r\n")
+
+        assert_eq!(frame.encode(), b"-Error message\r\n");
     }
 
     #[test]
@@ -188,6 +173,12 @@ mod tests {
             &frame.encode(),
             b"*3\r\n$3\r\nset\r\n$5\r\nhello\r\n$5\r\nworld\r\n"
         );
+    }
+
+    #[test]
+    fn test_null_array_encode() {
+        let frame: RespFrame = RespNullArray.into();
+        assert_eq!(frame.encode(), b"*-1\r\n");
     }
 
     #[test]
